@@ -1,4 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import path from 'path';
+import { getDatetimeString } from '@/lib/datetime';
+import { sanitizeSearchTerms } from '@/lib/sanitize';
+import { safeWriteFile, getDataDirectories } from '@/lib/filesystem';
+import { processArticles } from '@/lib/articleProcessor';
+import { saveLogAndReport, type LogMetadata } from '@/lib/logger';
 
 // Configuration
 const SEARCH_API = (process.env.SEARCH_API || 'brave') as 'brave' | 'firecrawl';
@@ -24,6 +30,7 @@ interface NewsItem {
     cachedAt?: string;
   };
   summary?: string;
+  markdown?: string;
 }
 
 interface BraveSearchResult {
@@ -95,7 +102,7 @@ async function searchWithFirecrawl(query: string, limit: number): Promise<NewsIt
       onlyMainContent: false,
       maxAge: 172800000,
       parsers: ["pdf"],
-      formats: ["summary"]
+      formats: ["markdown", "summary"]
     }
   };
 
@@ -122,10 +129,15 @@ async function searchWithFirecrawl(query: string, limit: number): Promise<NewsIt
 }
 
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+  const requestTimestamp = new Date();
+  let query = "top AI news stories";
+  let limit = 10;
+
   try {
     const body = await request.json();
-    const query = body.query || "top AI news stories";
-    const limit = body.limit || 10;
+    query = body.query || query;
+    limit = body.limit || limit;
 
     console.log(`Using search API: ${SEARCH_API}`);
 
@@ -139,17 +151,87 @@ export async function POST(request: NextRequest) {
 
     console.log('Extracted web results:', webResults.length, 'items');
 
+    // Process articles into comprehensive data structure
+    const articleData = processArticles(webResults, query, SEARCH_API);
+
+    // Generate filename for article data
+    const datetimeStr = getDatetimeString();
+    const sanitizedQuery = sanitizeSearchTerms(query);
+    const filename = `articles_${sanitizedQuery}_${datetimeStr}.json`;
+
+    // Save article data to file
+    const { articles: articlesDir } = getDataDirectories();
+    const filePath = path.join(articlesDir, filename);
+
+    try {
+      await safeWriteFile(filePath, JSON.stringify(articleData, null, 2));
+      console.log(`Saved article data to: ${filename}`);
+    } catch (fileError) {
+      console.error('Error saving article file:', fileError);
+      // Don't fail the request if file save fails
+    }
+
+    const responseTime = ((Date.now() - startTime) / 1000).toFixed(2);
+
+    // Save log and report
+    const logMetadata: LogMetadata = {
+      query,
+      searchEngine: SEARCH_API,
+      articleCount: webResults.length,
+      limit,
+      responseTime: `${responseTime}s`,
+      status: 'success',
+      timestamp: requestTimestamp,
+    };
+
+    const topResults = webResults.slice(0, 10).map(item => ({
+      title: item.title,
+      url: item.url,
+      siteName: item.metadata?.site_name || item.metadata?.ogSiteName,
+    }));
+
+    try {
+      await saveLogAndReport(logMetadata, topResults);
+    } catch (logError) {
+      console.error('Error saving log/report:', logError);
+      // Don't fail the request if logging fails
+    }
+
     // Return the data in the expected format
     return NextResponse.json({
       success: true,
       web: webResults,
-      searchEngine: SEARCH_API
+      searchEngine: SEARCH_API,
+      articleFilename: filename,
+      responseTime: `${responseTime}s`,
+      articleCount: webResults.length
     });
   } catch (error) {
     console.error('Error fetching news:', error);
+    const responseTime = ((Date.now() - startTime) / 1000).toFixed(2);
+    const errorMessage = error instanceof Error ? error.message : 'Failed to fetch news';
+
+    // Log error
+    try {
+      const logMetadata: LogMetadata = {
+        query,
+        searchEngine: SEARCH_API,
+        articleCount: 0,
+        limit,
+        responseTime: `${responseTime}s`,
+        status: 'error',
+        errorMessage,
+        timestamp: requestTimestamp,
+      };
+
+      await saveLogAndReport(logMetadata);
+    } catch (logError) {
+      console.error('Error saving error log:', logError);
+    }
+
     return NextResponse.json(
       {
-        error: error instanceof Error ? error.message : 'Failed to fetch news',
+        error: errorMessage,
         searchEngine: SEARCH_API
       },
       { status: 500 }

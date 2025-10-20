@@ -5,10 +5,13 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Slider } from "@/components/ui/slider";
 import { NewsCard } from "@/components/news-card";
 import { NewsSkeleton } from "@/components/news-skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { RefreshCw, Search, Sparkles } from "lucide-react";
+import { RefreshCw, Search, Sparkles, FileJson } from "lucide-react";
+import { SearchHistory, addToSearchHistory, type SearchHistoryItem } from "@/components/search-history";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 interface NewsItem {
   url: string;
@@ -34,6 +37,9 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearching, setIsSearching] = useState(false);
+  const [articleFilename, setArticleFilename] = useState<string | null>(null);
+  const [historyKey, setHistoryKey] = useState(0); // Force re-render of history component
+  const [articleCount, setArticleCount] = useState(12);
 
   const fetchNews = async (query?: string) => {
     try {
@@ -48,7 +54,7 @@ export default function Home() {
         },
         body: JSON.stringify({
           query: query || "top AI news stories",
-          limit: 12
+          limit: articleCount
         }),
       });
 
@@ -63,6 +69,20 @@ export default function Home() {
       }
 
       setNews(data.web || []);
+      setArticleFilename(data.articleFilename || null);
+
+      // Add to search history if we have filename
+      if (data.articleFilename && query) {
+        const historyItem: SearchHistoryItem = {
+          query: query,
+          datetime: new Date().toISOString(),
+          filename: data.articleFilename,
+          articleCount: data.articleCount || 0,
+          searchEngine: data.searchEngine || 'brave',
+        };
+        addToSearchHistory(historyItem);
+        setHistoryKey(prev => prev + 1); // Trigger re-render
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
@@ -97,6 +117,7 @@ export default function Home() {
               />
             </div>
             <div className="flex items-center space-x-4">
+              <ThemeToggle />
               <Button variant="outline">Sign In</Button>
               <Button>Get Started</Button>
             </div>
@@ -114,36 +135,73 @@ export default function Home() {
           </p>
         </div>
 
-        {/* Search Section */}
-        <Card className="max-w-2xl mx-auto mb-12">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Search className="w-5 h-5" />
-              Search AI News
-            </CardTitle>
-            <CardDescription>
-              Enter keywords to find specific AI news topics
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSearch} className="flex gap-2">
-              <Input
-                type="text"
-                placeholder="e.g., machine learning, OpenAI, robotics..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="flex-1"
-              />
-              <Button type="submit" disabled={isSearching}>
-                {isSearching ? (
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Search className="w-4 h-4" />
-                )}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+        {/* Search Section with History */}
+        <div className="grid lg:grid-cols-[2fr,1fr] gap-6 mb-12">
+          {/* Search Box */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Search className="w-5 h-5" />
+                Search AI News
+              </CardTitle>
+              <CardDescription>
+                Enter keywords to find specific AI news topics
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Article Count Slider */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium">Article Count</label>
+                  <span className="text-sm text-muted-foreground">{articleCount}</span>
+                </div>
+                <Slider
+                  value={[articleCount]}
+                  onValueChange={(value) => setArticleCount(value[0])}
+                  min={5}
+                  max={50}
+                  step={1}
+                />
+              </div>
+
+              {/* Search Input */}
+              <form onSubmit={handleSearch} className="flex gap-2">
+                <Input
+                  type="text"
+                  placeholder="e.g., machine learning, OpenAI, robotics..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="flex-1"
+                />
+                <Button type="submit" disabled={isSearching}>
+                  {isSearching ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Search className="w-4 h-4" />
+                  )}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+
+          {/* Search History */}
+          <SearchHistory key={historyKey} />
+        </div>
+
+        {/* Article Data Link */}
+        {articleFilename && (
+          <div className="mb-6">
+            <a
+              href={`/api/articles/${articleFilename}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+            >
+              <FileJson className="w-4 h-4" />
+              View Full Article Data (JSON)
+            </a>
+          </div>
+        )}
 
         {/* News Grid */}
         <div className="mb-8">
