@@ -1,0 +1,9 @@
+[2025-10-20 10:42:40] API Call Started
+Query: "top AI news stories"
+Search Engine: brave
+Article Count Requested: 12
+---
+[2025-10-20 10:42:41] API Call Completed
+Results: 12 articles
+Response Time: 0.98s
+Status: Success
